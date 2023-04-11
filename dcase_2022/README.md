@@ -1,2 +1,2 @@
-# DCASE
-Detection and Classification of Acoustic Scenes and Events
+# DCASE 2022
+
