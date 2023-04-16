@@ -1,4 +1,6 @@
 import os
+# IF CAN/WANT TO USE GPU , COMMENT THE LINE BELOW
+os.environ["CUDA_VISIBLE_DEVICES"]="-1"
 
 import h5py
 
@@ -22,10 +24,11 @@ scene_labels = ['airport',
                 'street_pedestrian',
                 'street_traffic',
                 'tram']
-
+current_dir=os.getcwd()
+current_dir=current_dir.replace("\\","/")
 dasetName="kerasTuner8k_140_8_WavSpecAug"
-hdf5_path_Train = "data/8k_140_8/WavSpecAug/Train_fs8000_140_2048_0.256_0.128.h5"
-hdf5_path_Test = "data/8k_140_8/WavSpecAug/Test_fs8000_140_2048_0.256_0.128.h5"
+hdf5_path_Train = current_dir +"/myDCASE/data/8k_140_8/WavSpecAug/Train_fs8000_140_2048_0.256_0.128.h5"
+hdf5_path_Test = current_dir +"/myDCASE/data/8k_140_8/WavSpecAug/Test_fs8000_140_2048_0.256_0.128.h5"
 
 
 directory="resultados/AI4EDGE_4/"
@@ -71,6 +74,7 @@ for x in range(len(scene_labels)):
       globals()[f"keras_model_{x}"]=loadModelH5(directory+modelName)
     except:
         print("ainda não existe "+ modelName)
+        print(hdf5_path_Train)
         X_train, X_validation, Y_validation, Y_train = readData(hdf5_path_Train, hdf5_path_Test)
         x1, y1 = divide2Emsemle(X_train, Y_train, label)
         # data = np.array([y1]).T
