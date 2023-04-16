@@ -31,7 +31,7 @@ hdf5_path_Train = current_dir +"/myDCASE/data/8k_140_8/WavSpecAug/Train_fs8000_1
 hdf5_path_Test = current_dir +"/myDCASE/data/8k_140_8/WavSpecAug/Test_fs8000_140_2048_0.256_0.128.h5"
 
 
-directory="resultados/AI4EDGE_4/"
+directory="/myDCASE/resultados/AI4EDGE_4/"
 if os.path.isdir(directory): pass
 else: os.makedirs(directory)
 dcase_util.utils.setup_logging(logging_file=os.path.join(directory+"EmsembleKD_task1a_1TrainDefault_2TrainAllData.log"))
