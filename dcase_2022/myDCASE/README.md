@@ -4,6 +4,11 @@
 >  [DCASE2022](https://dcase.community/challenge2022/task-low-complexity-acoustic-scene-classification)
 >  https://dcase.community/documents/challenge2022/technical_reports/DCASE2022_AI4EDGE_58_t1.pdf
 
+##  Dataset
+
+Change "data" folder with :
+(insert link here)
+
 
 ## 💻 Requirements
 * `conda create --name tf2-dcase python=3.6`
