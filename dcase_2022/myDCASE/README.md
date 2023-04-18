@@ -6,7 +6,7 @@
 
 ##  Dataset
 
-Change "data" folder with :
+Change current "data" folder with "data" folder in:
 https://drive.google.com/drive/folders/1Rpbba1JrqWx45bkhsjSmab9b5EiDlKB6?usp=share_link
 
 
