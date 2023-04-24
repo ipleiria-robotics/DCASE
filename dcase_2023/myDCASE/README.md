@@ -1,8 +1,13 @@
-# DCASE2022 - Task 1
+# DCASE2023 - Task 1
 
 > Participação no concurso (DCASE2022) Tarefa 1 Low-Complexity Acoustic Scene Classification
 >  [DCASE2022](https://dcase.community/challenge2022/task-low-complexity-acoustic-scene-classification)
 >  https://dcase.community/documents/challenge2022/technical_reports/DCASE2022_AI4EDGE_58_t1.pdf
+
+##  Dataset
+
+Change current "data" folder with "data" folder in:
+https://drive.google.com/drive/folders/1Rpbba1JrqWx45bkhsjSmab9b5EiDlKB6?usp=share_link
 
 
 ## 💻 Requirements
