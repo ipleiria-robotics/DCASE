@@ -1,2 +1,3 @@
-# DCASE
-Detection and Classification of Acoustic Scenes and Events
+# DCASE 2023
+
+Main info on folder myDCASE
