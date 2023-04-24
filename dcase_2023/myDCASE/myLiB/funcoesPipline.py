@@ -331,6 +331,8 @@ def do_testing(scene_labels,fold_model_filename,path_estimated_scene,test_featur
         interpreter = tf.lite.Interpreter(model_path=testNameDir+"/"+fold_model_filename)
     if(tf.__version__>='2.3.0'):
         interpreter = tf.lite.Interpreter(model_path=testNameDir+"/"+fold_model_filename,num_threads=14) #TF2.3
+    #TESTE
+    interpreter = tf.lite.Interpreter(model_path=testNameDir + "/" + fold_model_filename, num_threads=14)  # TF2.3
     interpreter.allocate_tensors()
 
     if not os.path.isfile(testNameDir+"/"+path_estimated_scene):
