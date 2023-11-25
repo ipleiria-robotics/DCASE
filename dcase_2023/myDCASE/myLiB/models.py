@@ -1,5 +1,9 @@
 import tensorflow as tf
 
+from tensorflow_model_optimization.python.core.quantization.keras.quantizers import LastValueQuantizer, MovingAverageQuantizer
+from tensorflow_model_optimization.python.core.quantization.keras.quantize import quantize_annotate_layer
+from tensorflow_model_optimization.python.core.quantization.keras import quantize_config
+
 
 def modelSelector(model_type,input_Shape): #[Baseline,BaselineMod,BC_resnet,BC_resnet_DCASE2021,BC_resnet_DCASE2021_noSSN,BC_resnet_DCASE2021_resnorm,BC_resnet_DCASE2021_1resnorm_noSSN,BC_resnet_DCASE2021_resnorm_MOD8]
     if (model_type == 'Baseline'):
@@ -288,6 +292,12 @@ class NormalBlock(tf.keras.layers.Layer):
 
   def get_output_state(self):
     return self.temporal_dw_conv.get_output_state()
+
+class AddColumnOfZeros(tf.keras.layers.Layer):
+    def call(self, inputs):
+        zeros=tf.zeros((tf.shape(inputs)[0], tf.shape(inputs)[1], tf.shape(inputs)[2], 1))
+        return tf.concat([inputs, zeros], axis=-1)
+
 ####################################### MODELOS OBTIDOS KERAS TUNER ####################################################
 def BM2(input_Shape):
     filterL1 = 20
@@ -367,6 +377,117 @@ def BM2(input_Shape):
     optimizer.learning_rate = 0.001
     model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
     return model
+
+class CustomQuantizeConfig(quantize_config.QuantizeConfig):
+    def __init__(self):
+        self.weight_attrs = ['gamma', 'beta']
+        self.quantize_weights = [LastValueQuantizer(num_bits=8, symmetric=True, narrow_range=False, per_axis=False)] * len(self.weight_attrs)
+        #self.activation_attrs = ['activation']
+        #self.quantize_activations = [MovingAverageQuantizer(num_bits=8, symmetric=False, narrow_range=False, per_axis=False)] * len(self.activation_attrs)
+
+    def get_weights_and_quantizers(self, layer):
+        return [(getattr(layer, weight_attr), quantizer) for weight_attr, quantizer in zip(self.weight_attrs, self.quantize_weights)]
+
+    def get_activations_and_quantizers(self, layer):
+        #return [(getattr(layer, activation_attr), quantizer) for activation_attr, quantizer in zip(self.activation_attrs, self.quantize_activations)]
+        return []
+
+    def set_quantize_weights(self, layer, quantize_weights):
+        for weight_attr, weight in zip(self.weight_attrs, quantize_weights):
+            setattr(layer, weight_attr, weight)
+
+    def set_quantize_activations(self, layer, quantize_activations):
+        #for activation_attr, activation in zip(self.activation_attrs, quantize_activations):
+        #    setattr(layer, activation_attr, activation)
+        pass
+
+    def get_output_quantizers(self, layer):
+        return [MovingAverageQuantizer(num_bits=8, symmetric=False, narrow_range=False, per_axis=False)]
+
+    def get_config(self):
+        return {}
+
+def BM2_qat(input_Shape):
+
+
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = quantize_annotate_layer(tf.keras.layers.BatchNormalization(), CustomQuantizeConfig())(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = quantize_annotate_layer(tf.keras.layers.BatchNormalization(), CustomQuantizeConfig())(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = quantize_annotate_layer(tf.keras.layers.BatchNormalization(), CustomQuantizeConfig())(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-3_0")(x)
+    x = quantize_annotate_layer(tf.keras.layers.BatchNormalization(), CustomQuantizeConfig())(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
 def BM1(input_Shape):
     filterL1 = 20
     filterL2 = 16
@@ -441,6 +562,1074 @@ def BM1(input_Shape):
     output = tf.keras.layers.Dense(10, activation='softmax')(x)
     model = tf.keras.Model(input, output)
     return model
+
+def BM2_slightly_more_filters(input_Shape):
+    filterL1 = 36
+    filterL2 = 46
+    filterL3 = 46
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-3_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+def BM2_slightly_more_layers(input_Shape):
+    filterL1 = 20
+    filterL2 = 24
+    filterL3 = 24
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_1 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #5:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_2 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #6:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-5_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_slightly_more_layers_bigger(input_Shape):
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_1 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #5:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_2 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #6:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-5_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_slightly_more_layers_bigger_test(input_Shape):
+    filterL1 = 20
+    filterL2 = 22
+    filterL3 = 24
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_1 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #5:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_2 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #6:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-5_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+def BM2_residual(input_Shape):
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+    
+    input_res = tf.keras.layers.UpSampling2D(size=(1,14))(input)
+    input_res = tf.keras.layers.Reshape((140,4,28))(input_res)
+
+    x = tf.keras.layers.Add()([x, input_res])
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-3_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+def BM2_residual_v2(input_Shape):
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+    
+    #input_res = tf.keras.layers.ZeroPadding2D(size=(1,14))(input)
+
+
+    input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    input_res = tf.keras.layers.ZeroPadding2D(padding=(0,13),data_format="channels_first")(input_res)
+    #input_res = tf.keras.layers.Reshape((140,4,28))(input_res)
+
+    x = tf.keras.layers.Add()([x, input_res])
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-3_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_residual_deeper(input_Shape):
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    input_residual = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(input_residual)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+    
+    #input_res = tf.keras.layers.ZeroPadding2D(size=(1,14))(input)
+
+
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    input_residual = tf.keras.layers.ZeroPadding2D(padding=(0,4),data_format="channels_first")(input_residual)
+    input_residual = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(input_residual)
+    
+    
+    x = tf.keras.layers.Add()([x, input_residual])
+
+
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    
+    
+
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-3_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_slightly_more_layers_more_drop(input_Shape):
+    filterL1 = 20
+    filterL2 = 28
+    filterL3 = 28
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',
+                               name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',
+                               padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_1 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    # x = tf.keras.layers.Dropout(dropout1)(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+
+    # CNN layer #5:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',
+                               padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    # if pooling_2 == 'max':
+    #     x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    # else:
+    #     x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #6:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-5_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_bigger(input_Shape):
+    filterL1 = 60
+    filterL2 = 84
+    filterL3 = 84
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #2_2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    
+    x = tf.keras.layers.Dropout(dropout1)(x)
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    # CNN layer #3_2:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-6_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+def BM2_bigger_residual(input_Shape):
+    filterL1 = 60
+    filterL2 = 84
+    filterL3 = 84
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-2")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    input_res=AddColumnOfZeros()(input)
+    input_res = tf.keras.layers.ZeroPadding2D(padding=(0,41),data_format="channels_first")(input_res)
+    #input_res=AddColumnOfZeros(input_res)
+    ##
+    x = tf.keras.layers.Add()([x, input_res])
+
+
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    #x = tf.keras.layers.Dropout(dropout1)(x)
+
+    input_res_2 = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #2_2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-3")(input_res_2)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    #input_res = tf.keras.layers.ZeroPadding2D(padding=(0,13),data_format="channels_first")(input_res)
+    #input_res = tf.keras.layers.Reshape((140,4,28))(input_res)
+
+    
+
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-4")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    #input_res = tf.keras.layers.ZeroPadding2D(padding=(0,41),data_format="channels_first")(input_res)
+    x = tf.keras.layers.Add()([x, input_res_2])
+
+
+
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    # CNN layer #3_2:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-6_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
+
+
+def BM2_bigger_residual_deeper(input_Shape):
+    filterL1 = 60
+    filterL2 = 84
+    filterL3 = 84
+    dropout1 = 0.1
+    dropout2 = 0.3
+    dropout3 = 0.4
+    CNN_kernel_size_1 = 7
+    CNN_kernel_size_11 = 5
+    CNN_kernel_size_2 = 7
+    CNN_kernel_size_22 = 3
+    CNN_kernel_size_3 = 3
+    CNN_kernel_size_33 = 7
+    pool_kernel_size_2 = 1
+    pool_kernel_size_22 = 2
+    pool_kernel_size_3 = 2
+    pool_kernel_size_33 = 2
+    pooling_1 = 'max'
+    pooling_2 = 'max'
+    pooling_3 = 'avg'
+    units = 256
+
+    input = tf.keras.layers.Input(shape=input_Shape)
+    # CNN layer #1:
+    x = tf.keras.layers.Conv2D(filters=filterL1, kernel_size=(CNN_kernel_size_1, CNN_kernel_size_11), padding='same',name="Conv-1")(input)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+
+    input_res= tf.keras.layers.Activation('relu')(x)
+
+    
+    # CNN layer #2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-2")(input_res)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    if pooling_1 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(x)
+    #x = tf.keras.layers.Dropout(dropout1)(x)
+
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+    # CNN layer #2_2:
+    x = tf.keras.layers.Conv2D(filters=filterL2, kernel_size=(CNN_kernel_size_2, CNN_kernel_size_22), activation='relu',padding='same', name="Conv-3")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(dropout1)(x)
+
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    #input_res = tf.keras.layers.ZeroPadding2D(padding=(0,13),data_format="channels_first")(input_res)
+    #input_res = tf.keras.layers.Reshape((140,4,28))(input_res)
+
+    #input_res = tf.keras.layers.Reshape((140,4,120))(input_res)
+    input_res=tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_2, pool_kernel_size_22))(input_res)
+    input_res = tf.keras.layers.ZeroPadding2D(padding=(0,12),data_format="channels_first")(input_res)
+    input_res_2 = tf.keras.layers.Add()([x, input_res])
+
+    # CNN layer #3:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-4")(input_res_2)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+
+    #input_res = tf.keras.layers.Reshape((140,4,2))(input)
+    #input_res = tf.keras.layers.ZeroPadding2D(padding=(0,41),data_format="channels_first")(input_res)
+    
+
+
+
+    if pooling_2 == 'max':
+        x = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    else:
+        x = tf.keras.layers.AveragePooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    # CNN layer #3_2:
+    x = tf.keras.layers.Conv2D(filters=filterL3, kernel_size=(CNN_kernel_size_3, CNN_kernel_size_33), activation='relu',padding='same', name="Conv-5")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(dropout2)(x)
+    
+    input_res_2 = tf.keras.layers.MaxPooling2D(pool_size=(pool_kernel_size_3, pool_kernel_size_33))(input_res_2)
+    x = tf.keras.layers.Add()([x, input_res_2])
+
+ # CNN layer #4:
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=(7, 5), activation='relu', padding='same', name="Conv-6_0")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Activation('relu')(x)
+    x = tf.keras.layers.Dropout(0.3)(x)
+
+    if pooling_3 == 'max':
+        x = tf.keras.layers.GlobalMaxPool2D()(x)
+    elif pooling_3 == 'avg':
+        x = tf.keras.layers.GlobalAvgPool2D()(x)
+    elif pooling_3 == 'clear':
+        pass
+
+    x = tf.keras.layers.Flatten()(x)
+    x = tf.keras.layers.Dense(units, activation='relu', name="lastLayer")(x)
+    x = tf.keras.layers.Dropout(dropout3)(x)
+    output = tf.keras.layers.Dense(10, activation='softmax')(x)
+    model = tf.keras.Model(input, output)
+
+    # hp_optimizer = hp.Choice('optimizer', values=['adam', 'SGD', 'rmsprop'])
+    # optimizer = tf.keras.optimizers.get(hp_optimizer)
+    optimizer = tf.keras.optimizers.get('adam')
+    # optimizer.learning_rate = hp.Choice("learning_rate", [0.1, 0.01, 0.001,0.0001], default=0.01)
+    optimizer.learning_rate = 0.001
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
+    return model
+
 
 
 def BM2_resnet(input_Shape):
