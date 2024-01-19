@@ -1,1 +1,3 @@
-dcase_2024/dataset
+dcase_2024/Dataset
+*.h5
+*.log
