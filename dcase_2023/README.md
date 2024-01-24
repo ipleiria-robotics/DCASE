@@ -1,3 +1,3 @@
 # DCASE 2023
 
-Main info on folder myDCASE
+DCASE2023 challenge, the TMSIC student model was submitted, trained with the proposed RRS KD method. The model was quantized with PTQ using a dynamic-range. In the competition evaluation, the model was tested using an unseen dataset, featuring data recorded from different devices in order to test its ability to generalize and classify new data. The submitted model achieved an accuracy of 51.9% on the new unseen dataset, which is a significantly lower accuracy compared to the one obtained using the development dataset. This indicates that the model is overfit to the unbalanced development dataset and more advanced data augmentation and regularization techniques should have been employed. However, it is a performance improvement (0.3%) compared with the results obtained in DCASE2022 challenge, meaning that the proposed RRS method performed better than the Response-Based KD used in DCASE2022.
