@@ -12,16 +12,18 @@ import librosa
 
 from myLiB.utils import *
 
-scene_labels = ['airport',
-                'bus',
-                'metro',
-                'metro_station',
-                'park',
-                'public_square',
-                'shopping_mall',
-                'street_pedestrian',
-                'street_traffic',
-                'tram']
+scene_labels = {
+    'airport':0,
+    'bus':1,
+    'metro':2,
+    'metro_station':3,
+    'park':4,
+    'public_square':5,
+    'shopping_mall':6,
+    'street_pedestrian':7,
+    'street_traffic':8,
+    'tram':9
+}
 
 
 #TODO: ficheiro responsavel pelo pipline de extração de features/data_augmentation e armazenamento de variaveis no h5py prontas a treinar
@@ -42,11 +44,12 @@ datasetPathAudio = dir_path + "/Dataset/TAU-urban-acoustic-scenes-2022-mobile-de
 
 output_dir=""
 
-#Baseline Settings (44.1kHz) (40mels) (0.04s win) (0.02s hop) | SHAPE(40,51)
+#Baseline Settings (44.1kHz) (51mels) (0.04s win) (0.02s hop) | SHAPE(51,51)
+fs_new=44100 #7000
 fs_Orig=44100
 dicc = {'spectrogram_type': 'magnitude',
         'hop_length_seconds': 0.02,
-        'win_length_seconds': 0.04,
+        'win_length_seconds': 0.04,  
         'window_type': 'hamming_asymmetric',
         'n_mels': 40,
         'n_fft': 2048,
@@ -61,46 +64,12 @@ dataAugmentationAudio=False
 dataAugmentationSpec=False
 normalizar=False
 
-# informação dos parametros na pagina 61 da TESE do Ricardo 
-# -> Analisando os resultados obtidos Tabela 5.5,
-#   verifica-se que a diminuição da frequência de amostragem e o aumento do número de
-#  filtros de mel favorecem melhores resultados.
-
-
-fs_new=44100
-#fs_new=22050
-#fs_new=16000
-#fs_new=8000
-dicc['fs']=fs_new
-dicc['fmin']=0
-dicc['fmax']= fs_new // 2
-####################################################
-# #kerasTunerConfigs FS=8kHz [260x8] run(1)
-# fs_new=8000
-# dicc['fs']=fs_new
-# dicc['fmin']=0
-# dicc['fmax']= fs_new // 2
-# dicc['n_fft']=2048
-# dicc['n_mels']=260
-# dicc['win_length_seconds']=0.256 #2048/fs_new
-# dicc['hop_length_seconds']=0.128 #1024/fs_new
-
-# #kerasTunerConfigs FS=8kHz [140x8] run(2)
-fs_new=8000
-dicc['fs']=fs_new
-dicc['fmin']=0
-dicc['fmax']= fs_new // 2
-dicc['n_fft']=2048
-dicc['n_mels']=140
-dicc['win_length_seconds']=0.256 #2048/fs_new
-dicc['hop_length_seconds']=0.128 #1024/fs_new
-
-####################################################
-
 extractor = dcase_util.features.MelExtractor(**dicc)
 
 trainFile='Train_fs' + str(fs_new) + "_" + str(dicc['n_mels']) + "_" + str(dicc['n_fft']) + "_" + str(dicc['win_length_seconds']) + "_" + str(dicc['hop_length_seconds']) + ".h5"
 testFileName='Test_fs' + str(fs_new) + "_" + str(dicc['n_mels']) + "_" + str(dicc['n_fft']) + "_" + str(dicc['win_length_seconds']) + "_" + str(dicc['hop_length_seconds']) + ".h5"
+testQuery='Query_fs' + str(fs_new) + "_" + str(dicc['n_mels']) + "_" + str(dicc['n_fft']) + "_" + str(dicc['win_length_seconds']) + "_" + str(dicc['hop_length_seconds']) + ".h5"
+testIndex='Index_fs' + str(fs_new) + "_" + str(dicc['n_mels']) + "_" + str(dicc['n_fft']) + "_" + str(dicc['win_length_seconds']) + "_" + str(dicc['hop_length_seconds']) + ".h5"
 descricao="\nfs" + str(fs_new) + " n_fft_" + str(dicc['n_fft']) + " n_mels_" + str(dicc['n_mels']) \
           +"\nwin_length_" + str(dicc['win_length_seconds']) +" hop_length_" + str(dicc['hop_length_seconds']) +\
           "\nDaugAudio_" + str(dataAugmentationAudio) +"\nDaugSpec_" + str(dataAugmentationSpec)+"\nNormalize_" + str(normalizar)
@@ -115,14 +84,21 @@ if(normalizar):
 audios_dir = pd.read_csv(path_meta, sep='\t', index_col=False)
 audio_names = audios_dir['filename']
 audio_names_List = audios_dir['filename'].tolist() #audio_names em formato list
-audio_labels = audios_dir['scene_label']
+#audio_labels = audios_dir['scene_label']
+audio_labels = []
+for label in audios_dir['scene_label']:
+    audio_labels.append(scene_labels[label])
+
 newData_identifier = audios_dir['identifier']
 source_label = audios_dir['source_label']
 ########################################################################################################################
 ################################################# Train.CSV #############################################################
 train_file = pd.read_csv(path_train, sep='\t')
 train_filename = np.array(train_file['filename'])
-train_scene_label=train_file['scene_label']
+#train_scene_label=train_file['scene_label']
+train_scene_label = []
+for label in train_file['scene_label']:
+    train_scene_label.append(scene_labels[label])
 
 train_source_label=[]
 train_indentifier=[]
@@ -188,6 +164,7 @@ newData=[]
 newData_scene_label=[]
 newData_source_label=[]
 newData_identifier=[]
+yy = 0
 with ThreadPoolExecutor() as executor:
     for i in range(0,len(df['filename'])):
         audio = dcase_util.containers.AudioContainer().load(filename=datasetPathAudio + "/" + df['filename'][i], mono=True, fs=fs_Orig)
@@ -203,7 +180,8 @@ with ThreadPoolExecutor() as executor:
         newData_scene_label.append(df['scene_label'][i])
         newData_source_label.append(df['source_label'][i])
         newData_identifier.append(df['identifier'][i])
-
+        yy = yy + 1
+        print(yy)
         if(df['Na'][i]== False):
             if(dataAugmentationAudio):
                 audioAugment= augment(samples=audio, sample_rate=fs_new)
@@ -294,7 +272,7 @@ for i in range(len(newData_identifier)):
 
 #Split data 70% Train 30%Validação
 from sklearn.model_selection import train_test_split
-X_train, X_validation, Y_train, Y_validation = train_test_split(newData, newData_scene_label, test_size=0.30,random_state=1, stratify=newData_identifier)
+X_train, X_validation, Y_train, Y_validation = train_test_split(newData, newData_scene_label, test_size=0.10,random_state=1, stratify=newData_identifier)
 del newData,newData_scene_label,newData_identifier,newData_source_label
 
 packed_hdf5_path = os.path.join(output_dir,trainFile)
@@ -305,23 +283,29 @@ meta_dict = {
     'Y_validation': np.array(Y_validation),
     'descricao': np.array(descricao),
 }
+
+
+print((len(X_train), X_train[0].shape[0],X_train[0].shape[1]))
+print((len(X_validation), X_validation[0].shape[0],X_validation[0].shape[1]))
+
+
 audios_numtrain = len(meta_dict['Y_train'])
 audios_numval = len(meta_dict['Y_validation'])
 with h5py.File(packed_hdf5_path, 'w') as hf:
     hf.create_dataset(
         name='Y_train',
         shape=(audios_numtrain,),
-        dtype='S20')
+        dtype='int64') # 'S20'
 
     hf.create_dataset(
         name='Y_validation',
         shape=(audios_numval,),
-        dtype='S20')
+        dtype='int64')  # 'S20'
 
     hf.create_dataset(
         name='X_train',
         shape=(len(X_train), X_train[0].shape[0],X_train[0].shape[1]),
-        dtype=np.float32)
+        dtype=np.float32) # 'uint8'
 
     hf.create_dataset(
         name='X_validation',
@@ -338,11 +322,11 @@ with h5py.File(packed_hdf5_path, 'w') as hf:
 
     for n in range(audios_numtrain):
         hf['X_train'][n] = X_train[n]
-        hf['Y_train'][n] = meta_dict['Y_train'][n].encode()
+        hf['Y_train'][n] = meta_dict['Y_train'][n]
 
     for n in range(audios_numval):
         hf['X_validation'][n] = X_validation[n]
-        hf['Y_validation'][n] = meta_dict['Y_validation'][n].encode()
+        hf['Y_validation'][n] = meta_dict['Y_validation'][n]
 
 
 print('Write hdf5 to {}'.format(packed_hdf5_path))
@@ -402,7 +386,7 @@ if not os.path.isfile("testData.h5"):
         hf.create_dataset(
             name='scene_label',
             shape=(audios_num,),
-            dtype='S20')
+            dtype='int64')
 
         hf.create_dataset(
             name='features',
@@ -421,7 +405,7 @@ if not os.path.isfile("testData.h5"):
         for n in range(audios_num):
             #features = float32_to_int16(features_all[n])
             hf['filename'][n] = meta_dict['filename'][n].split("/")[1].encode()
-            hf['scene_label'][n] = meta_dict['scene_label'][n].encode()
+            hf['scene_label'][n] = meta_dict['scene_label'][n]
             hf['features'][n] = testData[n]
     print('Write hdf5 to {}'.format(packed_hdf5_path))
     print("--- %s seconds testData ---" % (time.time() - start_time))
