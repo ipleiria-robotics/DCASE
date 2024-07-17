@@ -580,14 +580,14 @@ if(WITH_TRAIN_SSL):
     #del contrastive_model
 
 
-#if WITH_TRAIN_SSL == False:
-#    contrastive_model = tf.keras.models.load_model(
-#        DATA_PATH / "models" / ModelName,
-#        custom_objects={
-#            "ContrastiveModel": tfsim.models.ContrastiveModel,
-#            "ActivationStdLoggingLayer": tfsim.layers.ActivationStdLoggingLayer,
-#        },
-#    )
+if WITH_TRAIN_SSL == False:
+    contrastive_model = tf.keras.models.load_model(
+        DATA_PATH / "models" / ModelName,
+        custom_objects={
+            "ContrastiveModel": tfsim.models.ContrastiveModel,
+            "ActivationStdLoggingLayer": tfsim.layers.ActivationStdLoggingLayer,
+        },
+    )
 
     
 
@@ -671,25 +671,25 @@ no_pt_history = no_pt_eval_model.fit(
 
 
 # Pre-trained Uses the frozen pre-trained backbone from the ContrastiveModel and only trains the weights in the linear layer.
-#pt_eval_model = get_eval_model(
-#    _IMG_SIZE_X=IMG_SIZE_X,
-#    _IMG_SIZE_Y = IMG_SIZE_Y,
-#    _IMG_SIZE_D = IMG_SIZE_D,
-#    backbone=contrastive_model.backbone,
-#    total_steps=TEST_EPOCHS * TEST_STEPS_PER_EPOCH,
-#    trainable=False,
-#    lr=1e-3,
-#)
+pt_eval_model = get_eval_model(
+    _IMG_SIZE_X=IMG_SIZE_X,
+    _IMG_SIZE_Y = IMG_SIZE_Y,
+    _IMG_SIZE_D = IMG_SIZE_D,
+    backbone=contrastive_model.backbone,
+    total_steps=TEST_EPOCHS * TEST_STEPS_PER_EPOCH,
+    trainable=False,
+    lr=1e-3,
+)
 
-#pt_eval_model.summary()
-#pt_history = pt_eval_model.fit(
-#    eval_train_ds,
-#    batch_size=BATCH_SIZE,
-#    epochs=TEST_EPOCHS,
-#    steps_per_epoch=TEST_STEPS_PER_EPOCH,
-#    validation_data=eval_val_ds,
-#    validation_steps=VAL_STEPS_PER_EPOCH,
-#)
+pt_eval_model.summary()
+pt_history = pt_eval_model.fit(
+    eval_train_ds,
+    batch_size=BATCH_SIZE,
+    epochs=TEST_EPOCHS,
+    steps_per_epoch=TEST_STEPS_PER_EPOCH,
+    validation_data=eval_val_ds,
+    validation_steps=VAL_STEPS_PER_EPOCH,
+)
 
 plt.figure(figsize=(15, 4))
 plt.subplot(1, 2, 1)
@@ -713,6 +713,6 @@ print("Without SSL ", no_pretrain)
 log.info("Without SSL   loss: " + str(no_pretrain[0]) + "  Acc: " + str(no_pretrain[1]))
 
 
-#pretrained = pt_eval_model.evaluate(eval_test_ds)
-#print("With SSL ", pretrained)
-#log.info("With SSL   loss: " + str(pretrained[0]) + "  Acc: " + str(pretrained[1]))
+pretrained = pt_eval_model.evaluate(eval_test_ds)
+print("With SSL ", pretrained)
+log.info("With SSL   loss: " + str(pretrained[0]) + "  Acc: " + str(pretrained[1]))

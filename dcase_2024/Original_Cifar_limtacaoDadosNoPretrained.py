@@ -302,7 +302,7 @@ def get_backbone(img_size, activation="relu", preproc_mode="torch"):
 backbone = get_backbone(CIFAR_IMG_SIZE)
 backbone.summary()
 
-if(False):
+if(True):  # Colocar a False caso seja para fazer o download do modelo - SSL já realizado 
     # Projector Model
     projector = None  # Passing None will automatically build the default projector.
 
@@ -485,13 +485,13 @@ if(False):
 
     del contrastive_model
 
-#contrastive_model = tf.keras.models.load_model(
-#    DATA_PATH / "models" / "trained_model",
-#    custom_objects={
-#        "ContrastiveModel": tfsim.models.ContrastiveModel,
-#        "ActivationStdLoggingLayer": tfsim.layers.ActivationStdLoggingLayer,
-#    },
-#)
+contrastive_model = tf.keras.models.load_model(
+    DATA_PATH / "models" / "trained_model",
+    custom_objects={
+        "ContrastiveModel": tfsim.models.ContrastiveModel,
+        "ActivationStdLoggingLayer": tfsim.layers.ActivationStdLoggingLayer,
+    },
+)
 
 # This final section trains two different classifiers. 
 # 1-> No Pre-training: Uses a ResNet18 model and a simple linear layer.
@@ -514,13 +514,13 @@ def eval_augmenter(img):
     return img
 
 
-#eval_train_ds = tf.data.Dataset.from_tensor_slices((x_train, tf.keras.utils.to_categorical(y_train, 10)))
-#eval_train_ds = eval_train_ds.repeat()
-#eval_train_ds = eval_train_ds.shuffle(1024)
-#eval_train_ds = eval_train_ds.map(lambda x, y: (eval_augmenter(x), y), tf.data.AUTOTUNE)
-#eval_train_ds = eval_train_ds.map(lambda x, y: (img_scaling(x), y), tf.data.AUTOTUNE)
-#eval_train_ds = eval_train_ds.batch(BATCH_SIZE)
-#eval_train_ds = eval_train_ds.prefetch(tf.data.AUTOTUNE)
+eval_train_ds = tf.data.Dataset.from_tensor_slices((x_train, tf.keras.utils.to_categorical(y_train, 10)))
+eval_train_ds = eval_train_ds.repeat()
+eval_train_ds = eval_train_ds.shuffle(1024)
+eval_train_ds = eval_train_ds.map(lambda x, y: (eval_augmenter(x), y), tf.data.AUTOTUNE)
+eval_train_ds = eval_train_ds.map(lambda x, y: (img_scaling(x), y), tf.data.AUTOTUNE)
+eval_train_ds = eval_train_ds.batch(BATCH_SIZE)
+eval_train_ds = eval_train_ds.prefetch(tf.data.AUTOTUNE)
 
 
 eval_train_dsNoPreTrained = tf.data.Dataset.from_tensor_slices((x_trainNoPreTrained, tf.keras.utils.to_categorical(y_trainNoPreTrained, 10)))
@@ -577,25 +577,25 @@ no_pt_history = no_pt_eval_model.fit(
 
 
 # Pretrained
-#pt_eval_model = get_eval_model(
-#    img_size=CIFAR_IMG_SIZE,
-#    backbone=contrastive_model.backbone,
-#    total_steps=TEST_EPOCHS * TEST_STEPS_PER_EPOCH_NOPRETRAINED,
-#    trainable=False,
-#    lr=30.0,
-#)
+pt_eval_model = get_eval_model(
+    img_size=CIFAR_IMG_SIZE,
+    backbone=contrastive_model.backbone,
+    total_steps=TEST_EPOCHS * TEST_STEPS_PER_EPOCH_NOPRETRAINED,
+    trainable=False,
+    lr=30.0,
+)
 
-#pt_eval_model.summary()
+pt_eval_model.summary()
 
-#pt_history = pt_eval_model.fit(
-#    eval_train_dsNoPreTrained,
-#    batch_size=BATCH_SIZE,
-#    epochs=TEST_EPOCHS,
-#    steps_per_epoch=TEST_STEPS_PER_EPOCH_NOPRETRAINED,
-#    validation_data=eval_val_ds,
-#    validation_steps=VAL_STEPS_PER_EPOCH,
+pt_history = pt_eval_model.fit(
+    eval_train_dsNoPreTrained,
+    batch_size=BATCH_SIZE,
+    epochs=TEST_EPOCHS,
+    steps_per_epoch=TEST_STEPS_PER_EPOCH_NOPRETRAINED,
+    validation_data=eval_val_ds,
+    validation_steps=VAL_STEPS_PER_EPOCH,
     
-#)
+)
 
 plt.figure(figsize=(15, 4))
 plt.subplot(1, 2, 1)
@@ -624,6 +624,6 @@ print("no pretrain", no_pretrain)
 log.info("no pretrain    " + str(no_pretrain[0]) + "   " + str(no_pretrain[1]))
 
 
-#pretrained = pt_eval_model.evaluate(eval_test_ds)
-#print("pretrained", pretrained)
-#log.info("pretrain    " + str(pretrained[0]) + "   " + str(pretrained[1]))
+pretrained = pt_eval_model.evaluate(eval_test_ds)
+print("pretrained", pretrained)
+log.info("pretrain    " + str(pretrained[0]) + "   " + str(pretrained[1]))
